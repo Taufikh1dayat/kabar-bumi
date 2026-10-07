@@ -1,0 +1,221 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// -------------------------------------------------------------
+// ENUMS
+// -------------------------------------------------------------
+
+enum Role {
+  SUPERADMIN
+  ADVOKAT
+  KONTRIBUTOR
+}
+
+enum ReporterType {
+  KORBAN_SENDIRI
+  KELUARGA
+  TEMAN
+  SERIKAT
+  LAINNYA
+}
+
+enum Gender {
+  PEREMPUAN
+  LAKI_LAKI
+}
+
+enum CaseCategory {
+  TPPO
+  KEKERASAN_FISIK
+  GAJI_TIDAK_DIBAYAR
+  PENAHANAN_DOKUMEN
+  SENGKETA_KONTRAK
+  HILANG_KONTAK
+  SAKIT_MENINGGAL
+  LAINNYA
+}
+
+enum CasePriority {
+  RENDAH
+  SEDANG
+  TINGGI
+  DARURAT
+}
+
+enum CaseStatus {
+  DITERIMA
+  VERIFIKASI
+  INVESTIGASI
+  PENDAMPINGAN
+  SELESAI
+  DITUTUP
+}
+
+enum ArticleCategory {
+  BERITA
+  PERNYATAAN_SIKAP
+  EDUKASI_TPPO
+  KEGIATAN
+}
+
+enum Pillar {
+  PERLINDUNGAN
+  EDUKASI
+  PEMBERDAYAAN
+}
+
+// -------------------------------------------------------------
+// MODELS
+// -------------------------------------------------------------
+
+model User {
+  id           String        @id @default(cuid())
+  name         String
+  email        String        @unique
+  passwordHash String
+  role         Role          @default(ADVOKAT)
+  branch       String?       // Misal: Pusat, Cilacap, Ponorogo, Kupang
+  isActive     Boolean       @default(true)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  assignedCases CaseReport[]  @relation("AssignedAdvocate")
+  caseUpdates   CaseUpdate[]  @relation("UpdateAuthor")
+  auditLogs     AuditLog[]
+  articles      Article[]
+
+  @@index([email])
+  @@index([role])
+}
+
+model CaseReport {
+  id              String        @id @default(cuid())
+  ticketCode      String        @unique // Kode tracking unik acak (misal: KB-2610-K8P9M2)
+  status          CaseStatus    @default(DITERIMA)
+  priority        CasePriority  @default(SEDANG)
+  
+  // Data Pelapor
+  reporterType     ReporterType
+  reporterName     String
+  reporterPhone    String        // Field-level encrypted di database
+  reporterEmail    String?
+  reporterRelation String?
+
+  // Data Korban (Buruh Migran)
+  victimName          String
+  victimGender        Gender
+  victimNik           String?     // Field-level encrypted
+  victimPassport      String?     // Field-level encrypted
+  victimOriginAddress String
+  victimOriginCity    String
+  victimOriginProvince String
+
+  // Data Penempatan & Kerja
+  destinationCountry  String      // Negara penempatan (misal: Malaysia, Hong Kong, Taiwan, Arab Saudi)
+  departureYear       String?
+  agencyName          String?     // Nama PT / P3MI / Sponsor
+  jobSector           String?     // Misal: PRT, Manufaktur, ABK
+
+  // Detail Masalah
+  caseCategory    CaseCategory
+  chronology      String        @db.Text
+  demands         String?       @db.Text
+
+  // Audit Keamanan & Anti-Spam
+  ipHash          String?       // Hash anonymized IP untuk rate limiting & spam prevention
+  
+  // Penugasan Internal
+  assignedToId    String?
+  assignedTo      User?         @relation("AssignedAdvocate", fields: [assignedToId], references: [id])
+  
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  resolvedAt      DateTime?
+
+  updates         CaseUpdate[]
+  evidence        CaseEvidence[]
+  auditLogs       AuditLog[]
+
+  @@index([ticketCode])
+  @@index([status])
+  @@index([priority])
+  @@index([caseCategory])
+  @@index([destinationCountry])
+  @@index([createdAt])
+}
+
+model CaseUpdate {
+  id          String      @id @default(cuid())
+  caseId      String
+  case        CaseReport  @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  title       String
+  description String      @db.Text
+  isPublic    Boolean     @default(false) // Jika true, bisa dilihat pelapor saat cek nomor tiket
+  
+  authorId    String?
+  author      User?       @relation("UpdateAuthor", fields: [authorId], references: [id])
+  
+  createdAt   DateTime    @default(now())
+
+  @@index([caseId])
+  @@index([isPublic])
+}
+
+model CaseEvidence {
+  id          String      @id @default(cuid())
+  caseId      String
+  case        CaseReport  @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  fileName    String
+  fileUrl     String      // Lokasi file aman di storage / secure bucket
+  fileType    String
+  fileSize    Int
+  uploadedAt  DateTime    @default(now())
+
+  @@index([caseId])
+}
+
+model Article {
+  id          String          @id @default(cuid())
+  title       String
+  slug        String          @unique
+  category    ArticleCategory @default(BERITA)
+  pillar      Pillar?
+  excerpt     String          @db.Text
+  content     String          @db.Text
+  coverImage  String?
+  isPublished Boolean         @default(true)
+  publishedAt DateTime        @default(now())
+  
+  authorId    String?
+  author      User?           @relation(fields: [authorId], references: [id])
+  
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  @@index([slug])
+  @@index([category])
+  @@index([pillar])
+  @@index([isPublished, publishedAt])
+}
+
+model AuditLog {
+  id          String      @id @default(cuid())
+  userId      String?
+  user        User?       @relation(fields: [userId], references: [id])
+  caseId      String?
+  case        CaseReport? @relation(fields: [caseId], references: [id], onDelete: SetNull)
+  action      String      // Misal: "CREATE_REPORT", "VIEW_DECRYPTED_PII", "UPDATE_STATUS", "CHANGE_PRIORITY"
+  details     String?     @db.Text
+  ipHash      String?
+  createdAt   DateTime    @default(now())
+
+  @@index([caseId])
+  @@index([userId])
+  @@index([createdAt])
+}
