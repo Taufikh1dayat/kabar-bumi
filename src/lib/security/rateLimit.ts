@@ -11,7 +11,7 @@ const storage = new Map<string, RateLimitRecord>();
 
 // Cleanup stale entries every 10 minutes to avoid memory leak
 if (typeof setInterval !== "undefined") {
-  setInterval(() => {
+  const timer = setInterval(() => {
     const now = Date.now();
     for (const [key, record] of storage.entries()) {
       record.timestamps = record.timestamps.filter((ts) => now - ts < 600000);
@@ -20,6 +20,9 @@ if (typeof setInterval !== "undefined") {
       }
     }
   }, 600000);
+  if (typeof timer.unref === "function") {
+    timer.unref();
+  }
 }
 
 export interface RateLimitOptions {
